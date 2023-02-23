@@ -1,0 +1,59 @@
+Metadata-Version: 2.1
+Name: modal-client
+Version: 0.45.1122
+Summary: Python client library for Modal
+Author: Modal Labs
+Author-email: erik@modal.com
+Project-URL: Homepage, https://modal.com
+Keywords: modal,client,cloud,serverless,infrastructure
+Classifier: Topic :: System :: Distributed Computing
+Classifier: Operating System :: OS Independent
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: aiohttp
+Requires-Dist: aiostream
+Requires-Dist: asgiref
+Requires-Dist: certifi
+Requires-Dist: cloudpickle (>=2.0.0)
+Requires-Dist: click (>=8.1.0)
+Requires-Dist: fastapi
+Requires-Dist: grpclib (==0.4.3)
+Requires-Dist: importlib-metadata
+Requires-Dist: protobuf (<5.0,>=3.19)
+Requires-Dist: rich (>=12.0.0)
+Requires-Dist: sentry-sdk
+Requires-Dist: synchronicity (>=0.2.13)
+Requires-Dist: tblib (>=1.7.0)
+Requires-Dist: toml
+Requires-Dist: typer (>=0.6.1)
+Requires-Dist: types-certifi
+Requires-Dist: types-toml
+Requires-Dist: watchfiles
+
+# Modal Python Library
+
+The Modal Python Library provides convenient, on-demand access to serverless
+cloud compute from Python scripts on your local computer.
+
+## Documentation
+
+See the [Modal documentation](http://modal.com/docs) for Python, with examples
+of how to use the library. You need a Modal account to use this library. **We
+are currently in private beta**, and you can get a beta testing invite at
+[modal.com](https://modal.com/).
+
+## Installation
+
+This requires Python 3.7 or later. Install the package with:
+
+```bash
+pip install modal-client
+```
+
+## Support
+
+If you have beta access to Modal, join our Slack community to get quick customer
+support. An invite link is available on your user dashboard.

@@ -1,0 +1,957 @@
+syntax = "proto3";
+
+package modal.client;
+
+import "google/protobuf/empty.proto";
+
+enum AppState {
+  APP_STATE_UNSPECIFIED = 0;
+
+  // Will be discharged when the client disconnects
+  APP_STATE_EPHEMERAL = 1;
+
+  APP_STATE_DETACHED = 2;
+
+  // Will be discharged when overwritten
+  APP_STATE_DEPLOYED = 3;
+
+  // Winding down app due to user termination.
+  APP_STATE_STOPPING = 4;
+
+  // Stopped
+  APP_STATE_STOPPED = 5;
+
+  // App is created and in process of deployment.
+  APP_STATE_INITIALIZING = 6;
+
+  // Same as stopped but prevented from being garbage collected
+  APP_STATE_DISABLED = 7;
+}
+
+enum ClientType {
+  CLIENT_TYPE_UNSPECIFIED = 0;
+  CLIENT_TYPE_CLIENT = 1;
+  CLIENT_TYPE_WORKER = 2;
+  CLIENT_TYPE_CONTAINER = 3;
+  CLIENT_TYPE_SERVER = 4;
+  CLIENT_TYPE_WEB_SERVER = 5;
+}
+
+enum DeploymentNamespace {
+  DEPLOYMENT_NAMESPACE_UNSPECIFIED = 0;
+  DEPLOYMENT_NAMESPACE_WORKSPACE = 1;
+  DEPLOYMENT_NAMESPACE_GLOBAL = 3;
+}
+
+enum FileDescriptor {
+  FILE_DESCRIPTOR_UNSPECIFIED = 0;
+  FILE_DESCRIPTOR_STDOUT = 1;
+  FILE_DESCRIPTOR_STDERR = 2;
+  FILE_DESCRIPTOR_INFO = 3;
+}
+
+enum RateLimitInterval {
+  RATE_LIMIT_INTERVAL_UNSPECIFIED = 0;
+  RATE_LIMIT_INTERVAL_SECOND = 1;
+  RATE_LIMIT_INTERVAL_MINUTE = 2;
+}
+
+enum TaskState {
+  TASK_STATE_UNSPECIFIED = 0;
+  TASK_STATE_CREATED = 6;
+  TASK_STATE_QUEUED = 1;
+  TASK_STATE_WORKER_ASSIGNED = 2;
+  TASK_STATE_LOADING_IMAGE = 3;
+  TASK_STATE_ACTIVE = 4;
+  TASK_STATE_COMPLETED = 5;
+  TASK_STATE_CREATING_CONTAINER = 7;
+  TASK_STATE_IDLE = 8;
+}
+
+enum WebhookType {
+  WEBHOOK_TYPE_UNSPECIFIED = 0;
+  WEBHOOK_TYPE_ASGI_APP = 1;
+  WEBHOOK_TYPE_FUNCTION = 2;
+  WEBHOOK_TYPE_WSGI_APP = 3;
+}
+
+enum WebhookAsyncMode {
+  WEBHOOK_ASYNC_MODE_UNSPECIFIED = 0;
+  reserved 1; // unused REDIRECT mode
+  WEBHOOK_ASYNC_MODE_DISABLED = 2; // no redirect, fail after timeout
+  WEBHOOK_ASYNC_MODE_TRIGGER = 3; // return immediately, roughly same as old wait_for_response=False
+  WEBHOOK_ASYNC_MODE_AUTO = 4; // redirect to polling endpoint if execution time nears the http timeout
+}
+
+message AppClientDisconnectRequest {
+  string app_id = 1;
+}
+
+message AppCreateRequest {
+  string client_id = 1;
+  string description = 2;    // Human readable label for the website
+  bool detach = 3; // TODO: deprecate in 0.43, remove when 0.42 is unsupported
+  bool initializing = 4; // TODO: remove and make default=True when client 0.42 is unsupported
+}
+
+message AppCreateResponse {
+  string app_id = 1;
+  string app_logs_url = 2;
+}
+
+message AppStopRequest {
+  string app_id = 1;
+}
+
+message AppDeployRequest {
+  string app_id = 1;
+  DeploymentNamespace namespace = 2;
+  string name = 3;
+}
+
+message AppDeployResponse {
+  string url = 1;
+}
+
+message AppGetByDeploymentNameRequest {
+  DeploymentNamespace namespace = 1;
+  string name = 2;
+  string client_id = 3 [deprecated=true];
+}
+
+message AppGetByDeploymentNameResponse {
+  string app_id = 1;
+  string last_log_entry_id = 2; // Last log entry as a starting point for the client.
+}
+
+message AppGetLogsRequest {
+  string app_id = 1;
+  float timeout = 2;
+  string last_entry_id = 4;
+  string function_id = 5;
+  string input_id = 6;
+  string task_id = 7;
+}
+
+message AppGetObjectsRequest {
+  string app_id = 1;
+}
+
+message AppGetObjectsItem {
+  string tag = 1;
+  string object_id = 2;
+  oneof object_oneof {
+    Function function = 3;
+  }
+}
+
+message AppGetObjectsResponse {
+  map<string, string> object_ids = 1 [deprecated=true]; // remove once support for 0.43.0 is dropped
+  repeated AppGetObjectsItem items = 2;
+}
+
+message AppStats {
+  string app_id = 1;
+  string description = 3;
+  AppState state = 4;
+  double created_at = 5;
+  double stopped_at = 6;
+  int32 n_running_tasks = 8;
+  string object_entity = 9;
+  string name = 10;
+}
+
+message AppListResponse {
+  repeated AppStats apps = 1;
+}
+
+message AppLookupObjectRequest {
+  DeploymentNamespace namespace = 2;
+  string app_name = 3;
+  string object_tag = 4;
+  string object_id = 5;
+}
+
+message AppLookupObjectResponse {
+  string object_id = 1;
+  string error_message = 2;
+  oneof object_oneof {
+    Function function = 3;
+  }
+}
+
+message AppSetObjectsRequest {
+  // TODO: this is a bit of a hacky request meant to be somewhat temporary
+  // At some point, every object should be assigned to a app/namespace when created,
+  // so this method won't be necessary.
+  string app_id = 1;
+  map<string, string> indexed_object_ids = 2;
+  string client_id = 3;
+  repeated string unindexed_object_ids = 4;
+  AppState new_app_state = 5; // promotes an app from initializing to this new state
+}
+
+message AppHeartbeatRequest {
+  string app_id = 1;
+}
+
+message BaseImage {
+  string image_id = 1;
+  string docker_tag = 2;
+}
+
+message BlobCreateRequest {
+  // TODO(erikbern): how are these garbage collected?
+  // Shouldn't they belong to an app?
+  string content_md5 = 1;
+}
+
+message BlobCreateResponse {
+  string upload_url = 1;
+  string blob_id = 2;
+}
+
+message BlobGetRequest {
+  string blob_id = 1;
+}
+
+message BlobGetResponse {
+  string download_url = 1;
+}
+
+message ClientCreateRequest {
+  ClientType client_type = 1;
+  string version = 2;
+}
+
+message ClientCreateResponse {
+  string client_id = 1;
+  string error = 2;
+  string deprecation_warning = 3;
+}
+
+message ClientHelloResponse {
+  string warning = 1;
+}
+
+message ClientHeartbeatRequest {
+  string client_id = 1;
+  string current_input_id = 3;
+  double current_input_started_at = 4;
+}
+
+message ContainerArguments {  // This is used to pass data from the worker to the container
+  string task_id = 1;
+  string function_id = 2;
+  string app_id = 4;
+  Function function_def = 7;
+  ProxyInfo proxy_info = 8;
+  map<string, string> tracing_context = 9;
+}
+
+message ContainerHeartbeatRequest {
+  string current_input_id = 1;
+  double current_input_started_at = 2;
+}
+
+message DictContainsRequest {
+  string dict_id = 1;
+  bytes key = 2;
+}
+
+message DictContainsResponse {
+  bool found = 1;
+}
+
+message DictCreateRequest {
+  repeated DictEntry data = 1;
+  string app_id = 2;
+  string existing_dict_id = 3;
+}
+
+message DictCreateResponse {
+  string dict_id = 1;
+}
+
+message DictEntry {
+  bytes key = 1;
+  bytes value = 2;
+}
+
+message DictGetRequest {
+  string dict_id = 1;
+  bytes key = 2;
+}
+
+message DictGetResponse {
+  bool found = 1;
+  optional bytes value = 2;
+}
+
+message DictLenRequest {
+  string dict_id = 1;
+}
+
+message DictLenResponse {
+  int32 len = 1;
+}
+
+message DictPopRequest {
+  string dict_id = 1;
+  bytes key = 2;
+}
+
+message DictPopResponse {
+  bool found = 1;
+  optional bytes value = 2;
+}
+
+message DictUpdateRequest {
+  string dict_id = 1;
+  repeated DictEntry updates = 2;
+}
+
+message DictUpdateResponse {
+}
+
+message PTYInfo {
+  bool enabled = 1;
+  uint32 winsz_rows = 2;
+  uint32 winsz_cols = 3;
+  string env_term = 4;
+  string env_colorterm = 5;
+  string env_term_program = 6;
+}
+
+message Function {
+  string module_name = 1;
+  string function_name = 2;
+  repeated string mount_ids = 3;
+  string image_id = 4;
+  bytes function_serialized = 6;
+
+  enum DefinitionType {
+    DEFINITION_TYPE_UNSPECIFIED = 0;
+    DEFINITION_TYPE_SERIALIZED = 1;
+    DEFINITION_TYPE_FILE = 2;
+  }
+  DefinitionType definition_type = 7;
+
+  enum FunctionType {
+    FUNCTION_TYPE_UNSPECIFIED = 0;
+    FUNCTION_TYPE_GENERATOR = 1;
+    FUNCTION_TYPE_FUNCTION = 2;
+  }
+  FunctionType function_type = 8;
+
+  Resources resources = 9;
+  repeated string secret_ids = 10;
+
+  RateLimit rate_limit = 11;
+  WebhookConfig webhook_config = 15;
+
+  repeated SharedVolumeMount shared_volume_mounts = 16;
+
+  optional string proxy_id = 17;
+
+  FunctionRetryPolicy retry_policy = 18;
+
+  uint32 concurrency_limit = 19;
+
+  bool keep_warm = 20;
+
+  uint32 timeout_secs = 21;
+
+  PTYInfo pty_info = 22;
+  bytes class_serialized = 23;
+  
+  uint32 task_idle_timeout_secs = 25;
+
+  CloudProvider cloud_provider = 26;
+
+  uint32 warm_pool_size = 27;
+
+  string web_url = 28;
+  WebUrlInfo web_url_info = 29;
+}
+
+message FunctionCreateRequest {
+  Function function = 1;
+  string app_id = 2;
+  Schedule schedule = 6;
+  string existing_function_id = 7;
+}
+
+message FunctionCreateResponse {
+  string function_id = 1;
+  string web_url = 2;  // TODO(erikbern): deprecated shortly (moving it into Function)
+  WebUrlInfo web_url_info = 3;  // TODO(erikbern): deprecated shortly (moving it into Function)
+  Function function = 4;
+}
+
+message FunctionGetInputsItem {
+  string input_id = 1;
+  FunctionInput input = 2;
+  bool kill_switch = 3;
+  string function_call_id = 4;
+}
+
+message FunctionGetInputsRequest {
+  string function_id = 1;
+  int32 max_values = 3;
+  float average_call_time = 5;
+}
+
+message FunctionGetInputsResponse {
+  repeated FunctionGetInputsItem inputs = 3;
+  float rate_limit_sleep_duration = 4; // How long to sleep before requesting another input.
+}
+
+message FunctionGetOutputsItem {
+  GenericResult result = 1;
+  int32 idx = 2;
+  string input_id = 3;
+  int32 gen_index = 4;
+}
+
+message FunctionGetOutputsRequest {
+  string function_call_id = 1;
+  int32 max_values = 2;
+  float timeout = 3;
+  string last_entry_id = 6;
+  bool clear_on_success = 7; // expires *any* remaining outputs soon after this call, not just the returned ones
+}
+
+message FunctionGetOutputsResponse {
+  repeated int32 idxs = 3;
+  repeated FunctionGetOutputsItem outputs = 4;
+  string last_entry_id = 5;
+}
+
+message FunctionGetSerializedRequest {
+  string function_id = 1;
+}
+
+message FunctionGetSerializedResponse {
+  bytes function_serialized = 1;
+  bytes class_serialized = 2;
+}
+
+message FunctionInput {
+  // serialized (args, kwargs).
+  oneof args_oneof {
+    bytes args = 1;
+    string args_blob_id = 7;
+  }
+  bool final_input = 9; // TODO(erikbern): deprecate?
+}
+
+message FunctionMapRequest {
+  string function_id = 1;
+  string parent_input_id = 2;
+}
+
+message FunctionMapResponse {
+  string function_call_id = 1;
+}
+
+message FunctionPutInputsItem {
+  int32 idx = 1;
+  FunctionInput input = 2;
+}
+
+message FunctionPutInputsRequest {
+  string function_id = 1;
+  string function_call_id = 3;
+  repeated FunctionPutInputsItem inputs = 4;
+}
+
+message FunctionPutInputsResponseItem {
+  int32 idx = 1;
+  string input_id = 2;
+}
+
+message FunctionPutInputsResponse {
+  repeated FunctionPutInputsResponseItem inputs = 1;
+}
+
+message FunctionPutOutputsItem {
+  string input_id = 1;
+  GenericResult result = 2;
+  double input_started_at = 3;
+  double output_created_at = 4;
+  int32 gen_index = 6; // ordering for generator outputs
+}
+
+message FunctionPutOutputsRequest {
+  repeated FunctionPutOutputsItem outputs = 4;
+}
+
+message FunctionRetryPolicy {
+  float backoff_coefficient = 1;
+  uint32 initial_delay_ms = 2;
+  uint32 max_delay_ms = 3;
+  // NOTE: two-byte field number not used for special reason. copy-paste error. Ref: PR #2542
+  uint32 retries = 18;
+}
+
+message FunctionGetCallGraphRequest {
+  // TODO: use input_id once we switch client submit API to return those.
+  string function_call_id = 2;
+}
+
+message InputCallGraphInfo {
+  string input_id = 1;
+  GenericResult.GenericStatus status = 2;
+  string function_call_id = 3;
+  string task_id = 4;
+}
+
+message FunctionCallCallGraphInfo {
+  string function_call_id = 1;
+  string parent_input_id = 2;
+  string function_name = 3;
+  string module_name = 4;
+}
+
+message FunctionGetCallGraphResponse {
+  repeated InputCallGraphInfo inputs = 1;
+  repeated FunctionCallCallGraphInfo function_calls = 2;
+}
+
+message FunctionGetCurrentStatsRequest {
+  string function_id = 1; 
+}
+
+message FunctionStats {
+  uint32 backlog = 1;
+  uint32 num_active_tasks = 2;
+  uint32 num_total_tasks = 3;
+}
+
+message GenericResult {  // Used for both tasks and function outputs
+  enum GenericStatus {
+    GENERIC_STATUS_UNSPECIFIED = 0;
+    GENERIC_STATUS_SUCCESS = 1;
+    GENERIC_STATUS_FAILURE = 2;
+    // Used when a task was killed using an external signal.
+    GENERIC_STATUS_TERMINATED = 3;
+    GENERIC_STATUS_TIMEOUT = 4;
+  }
+
+  GenericStatus status = 1;
+  string exception = 2;
+  int32 exitcode = 3;
+  string traceback = 4;
+
+  oneof data_oneof {
+    bytes data = 5;
+    string data_blob_id = 10;
+  }
+
+  enum GeneratorStatus {
+    GENERATOR_STATUS_UNSPECIFIED = 0;
+    GENERATOR_STATUS_INCOMPLETE = 1;
+    GENERATOR_STATUS_COMPLETE = 2;
+  }
+  GeneratorStatus gen_status = 7;
+
+  bytes serialized_tb = 11;
+  bytes tb_line_cache = 12;
+}
+
+message Image {
+  repeated BaseImage base_images = 5;
+  repeated string dockerfile_commands = 6;
+  repeated ImageContextFile context_files = 7;
+  string version = 11;
+  repeated string secret_ids = 12;
+  // Part of Image definition, because presence of GPU drivers
+  // affects the image that's built.
+  // Note: field 13 is getting replaced field 16. The client now sends both fields,
+  // but the server still only reads field 13.
+  bool gpu = 13;
+  string build_function_def = 14;
+  string context_mount_id = 15;
+  GPUConfig gpu_config = 16;
+}
+
+message ImageContextFile {
+  string filename = 1;
+  bytes data = 2;
+}
+
+message ImageGetOrCreateRequest {
+  Image image = 2;
+  string app_id = 4;
+  string existing_image_id = 5;  // ignored
+  string build_function_id = 6;
+}
+
+message ImageGetOrCreateResponse {
+  string image_id = 1;
+}
+
+message ImageJoinRequest {
+  string image_id = 1;
+  float timeout = 2;
+}
+
+message ImageJoinResponse {
+  GenericResult result = 1;
+}
+
+message MountBuildRequest {
+  string app_id = 2;
+  string existing_mount_id = 3;
+  repeated MountFile files = 4;
+}
+
+message MountBuildResponse {
+  string mount_id = 1;
+}
+
+message MountFile {
+  string filename = 1;
+  string sha256_hex = 3;
+}
+
+message MountPutFileRequest {
+  string sha256_hex = 2;
+
+  oneof data_oneof {
+    bytes data = 3;
+    string data_blob_id = 5;
+  }
+}
+
+message MountPutFileResponse {
+  bool exists = 2;
+}
+
+message ProxyInfo {
+  string elastic_ip = 1;
+  string proxy_key = 2;
+  string remote_addr = 3;
+  int32 remote_port = 4;
+}
+
+message QueueCreateRequest {
+  string app_id = 1;
+  string existing_queue_id = 2;
+}
+
+message QueueCreateResponse {
+  string queue_id = 1;
+}
+
+message QueueGetRequest {
+  string queue_id = 1;
+  float timeout = 3;
+  int32 n_values = 4;
+}
+
+message QueueGetResponse {
+  repeated bytes values = 2;
+}
+
+message QueuePutRequest {
+  string queue_id = 1;
+  repeated bytes values = 4;
+}
+
+message RateLimit {
+  int32 limit = 1;
+  RateLimitInterval interval = 2;
+}
+
+enum GPUType {
+  GPU_TYPE_UNSPECIFIED = 0;
+  GPU_TYPE_T4 = 1;
+  GPU_TYPE_A100 = 2;
+  GPU_TYPE_A10G = 3;
+  GPU_TYPE_ANY = 4;
+  GPU_TYPE_A100_20G = 5;
+}
+
+message GPUConfig {
+  GPUType type = 1;
+  uint32 count = 2;
+  uint32 memory = 3;
+}
+
+message Resources {
+  bool gpu = 1; // Legacy GPU toggle.
+  uint32 memory_mb = 2;
+  uint32 milli_cpu = 3;
+  GPUConfig gpu_config = 4;
+}
+
+
+enum CloudProvider {
+  CLOUD_PROVIDER_UNSPECIFIED = 0;
+  CLOUD_PROVIDER_AWS = 1;
+  CLOUD_PROVIDER_GCP = 2;
+  CLOUD_PROVIDER_AUTO = 3;
+}
+
+message Schedule {
+  message Cron {
+    string cron_string = 1;
+  }
+  message Period {
+    int32 years = 1;
+    int32 months = 2;
+    int32 weeks = 3;
+    int32 days = 4;
+    int32 hours = 5;
+    int32 minutes = 6;
+    float seconds = 7;
+  }
+  oneof schedule_oneof {
+    Cron cron = 1;
+    Period period = 2;
+  }
+}
+
+message SecretCreateRequest {
+  map<string, string> env_dict = 1;
+  string app_id = 2;
+  string template_type = 3;
+  string existing_secret_id = 4;
+}
+
+message SecretCreateResponse {
+  string secret_id = 1;
+}
+
+message SecretListItem {
+  string label = 1;
+  double created_at = 2;
+  double last_used_at = 3;
+}
+
+message SecretListResponse {
+  repeated SecretListItem items = 1;
+}
+
+message SharedVolumeCreateRequest {
+  string app_id = 1;
+  CloudProvider cloud_provider = 2;
+}
+
+message SharedVolumeCreateResponse {
+  string shared_volume_id = 1;
+}
+
+message SharedVolumeListItem {
+  string label = 1;  // app name of object entity app
+  string shared_volume_id = 2;
+  double created_at = 3;
+  CloudProvider cloud_provider = 4;
+}
+
+message SharedVolumeListResponse {
+  repeated SharedVolumeListItem items = 1;
+}
+
+message SharedVolumeListFilesRequest {
+  string shared_volume_id = 1;
+  string path = 2;
+}
+
+message SharedVolumePutFileRequest {
+  string shared_volume_id = 1;
+  string path = 2;
+  string sha256_hex = 3;
+  oneof data_oneof {
+    bytes data = 4;
+    string data_blob_id = 5;
+  }
+}
+
+message SharedVolumeGetFileRequest {
+  string shared_volume_id = 1;
+  string path = 2;
+}
+
+message SharedVolumeGetFileResponse {
+  oneof data_oneof {
+    bytes data = 1;
+    string data_blob_id = 2;
+  }
+}
+
+message SharedVolumeRemoveFileRequest {
+  string shared_volume_id = 1;
+  string path = 2;
+  bool recursive = 3;
+}
+
+message SharedVolumeListFilesEntry {
+  enum FileType {
+    UNSPECIFIED = 0;
+    FILE = 1;
+    DIRECTORY = 2;
+  }
+  string path = 1;
+  FileType type = 2;
+}
+
+message SharedVolumeListFilesResponse {
+  repeated SharedVolumeListFilesEntry entries = 1;
+}
+
+message SharedVolumeMount {
+  string mount_path = 1;
+  string shared_volume_id = 2;
+  CloudProvider cloud_provider = 3;
+}
+
+message TaskLogs {
+  string data = 1;
+  TaskState task_state = 6;
+  double timestamp = 7;
+  FileDescriptor file_descriptor = 8;
+  TaskProgress task_progress = 9;
+  string function_call_id = 10;
+  string input_id = 11;
+}
+
+enum ProgressType {
+  IMAGE_SNAPSHOT_UPLOAD = 0;
+  FUNCTION_QUEUED = 1;
+}
+
+message TaskProgress {
+  uint64 len = 1;
+  uint64 pos = 2;
+  ProgressType progress_type = 3;
+  string description = 4;
+}
+
+message TaskLogsBatch {
+  string task_id = 1;
+  repeated TaskLogs items = 2;
+  string entry_id = 5;
+  bool app_done = 10;
+  string function_id = 11;
+}
+
+message TaskResultRequest {
+  string task_id = 1; // TODO: deprecate once old clients have been flushed.
+  modal.client.GenericResult result = 2;
+}
+
+message TokenFlowCreateRequest {
+  string node_name = 1;
+  string platform_name = 2;
+}
+
+message TokenFlowCreateResponse {
+  string token_flow_id = 1;
+  string web_url = 2;
+};
+
+message TokenFlowWaitRequest {
+  float timeout = 1;
+  string token_flow_id = 2;
+}
+
+message TokenFlowWaitResponse {
+  string token_id = 1;
+  string token_secret = 2;
+  bool timeout = 3;
+}
+
+message WebhookConfig {
+  WebhookType type = 1;
+  string method = 2;
+  bool wait_for_response = 3 [deprecated=true]; // rolled into async_mode - remove when ending support for 0.44
+  string requested_suffix = 4;
+  WebhookAsyncMode async_mode = 5;
+}
+
+message WebUrlInfo {
+  bool truncated = 1;
+  bool has_unique_hash = 2;
+  bool label_stolen = 3;
+}
+
+service ModalClient {
+  // Apps
+  rpc AppCreate(AppCreateRequest) returns (AppCreateResponse);
+  rpc AppClientDisconnect(AppClientDisconnectRequest) returns (google.protobuf.Empty);
+  rpc AppGetLogs(AppGetLogsRequest) returns (stream TaskLogsBatch);
+  rpc AppSetObjects(AppSetObjectsRequest) returns (google.protobuf.Empty);
+  rpc AppGetObjects(AppGetObjectsRequest) returns (AppGetObjectsResponse);
+  rpc AppList(google.protobuf.Empty) returns (AppListResponse);
+  rpc AppLookupObject(AppLookupObjectRequest) returns (AppLookupObjectResponse);
+  rpc AppDeploy(AppDeployRequest) returns (AppDeployResponse);
+  rpc AppGetByDeploymentName(AppGetByDeploymentNameRequest) returns (AppGetByDeploymentNameResponse);
+  rpc AppStop(AppStopRequest) returns (google.protobuf.Empty);
+  rpc AppHeartbeat(AppHeartbeatRequest) returns (google.protobuf.Empty);
+
+  // Blobs
+  rpc BlobCreate(BlobCreateRequest) returns (BlobCreateResponse);
+  rpc BlobGet(BlobGetRequest) returns (BlobGetResponse);
+
+  // Clients
+  rpc ClientCreate(ClientCreateRequest) returns (ClientCreateResponse);
+  rpc ClientHello(google.protobuf.Empty) returns (ClientHelloResponse);
+  rpc ClientHeartbeat(ClientHeartbeatRequest) returns (google.protobuf.Empty);
+
+  // Container
+  rpc ContainerHeartbeat(ContainerHeartbeatRequest) returns (google.protobuf.Empty);
+
+  // Dicts
+  rpc DictCreate(DictCreateRequest) returns (DictCreateResponse);
+  rpc DictUpdate(DictUpdateRequest) returns (DictUpdateResponse);
+  rpc DictGet(DictGetRequest) returns (DictGetResponse);
+  rpc DictPop(DictPopRequest) returns (DictPopResponse);
+  rpc DictContains(DictContainsRequest) returns (DictContainsResponse);
+  rpc DictLen(DictLenRequest) returns (DictLenResponse);
+
+  // Functions
+  rpc FunctionCreate(FunctionCreateRequest) returns (FunctionCreateResponse);
+  rpc FunctionGetSerialized(FunctionGetSerializedRequest) returns (FunctionGetSerializedResponse);
+  rpc FunctionMap(FunctionMapRequest) returns (FunctionMapResponse);
+  rpc FunctionPutInputs(FunctionPutInputsRequest) returns (FunctionPutInputsResponse);
+  rpc FunctionPutOutputs(FunctionPutOutputsRequest) returns (google.protobuf.Empty);  // For containers to return result
+  rpc FunctionGetInputs(FunctionGetInputsRequest) returns (FunctionGetInputsResponse);  // For containers to request next call
+  rpc FunctionGetOutputs(FunctionGetOutputsRequest) returns (FunctionGetOutputsResponse);  // Returns the next result(s) for an entire function call (FunctionMap)
+  rpc FunctionGetCallGraph(FunctionGetCallGraphRequest) returns (FunctionGetCallGraphResponse);
+  rpc FunctionGetCurrentStats(FunctionGetCurrentStatsRequest) returns (FunctionStats);
+
+  // Images
+  rpc ImageGetOrCreate(ImageGetOrCreateRequest) returns (ImageGetOrCreateResponse);
+  rpc ImageJoin(ImageJoinRequest) returns (ImageJoinResponse);
+
+  // Mounts
+  rpc MountPutFile(MountPutFileRequest) returns (MountPutFileResponse);
+  rpc MountBuild(MountBuildRequest) returns (MountBuildResponse);
+
+  // Queues
+  rpc QueueCreate(QueueCreateRequest) returns (QueueCreateResponse);
+  rpc QueueGet(QueueGetRequest) returns (QueueGetResponse);
+  rpc QueuePut(QueuePutRequest) returns (google.protobuf.Empty);
+
+  // Secrets
+  rpc SecretCreate(SecretCreateRequest) returns (SecretCreateResponse);
+  rpc SecretList(google.protobuf.Empty) returns (SecretListResponse);
+
+  // SharedVolumes
+  rpc SharedVolumeCreate(SharedVolumeCreateRequest) returns (SharedVolumeCreateResponse);
+  rpc SharedVolumeList(google.protobuf.Empty) returns (SharedVolumeListResponse);
+  rpc SharedVolumeListFiles(SharedVolumeListFilesRequest) returns (SharedVolumeListFilesResponse);
+  rpc SharedVolumePutFile(SharedVolumePutFileRequest) returns (google.protobuf.Empty);
+  rpc SharedVolumeGetFile(SharedVolumeGetFileRequest) returns (SharedVolumeGetFileResponse);
+  rpc SharedVolumeRemoveFile(SharedVolumeRemoveFileRequest) returns (google.protobuf.Empty);
+
+  // Tasks
+  rpc TaskResult(TaskResultRequest) returns (google.protobuf.Empty);
+
+  // Tokens (web auth flow)
+  rpc TokenFlowCreate(TokenFlowCreateRequest) returns (TokenFlowCreateResponse);
+  rpc TokenFlowWait(TokenFlowWaitRequest) returns (TokenFlowWaitResponse);
+}
